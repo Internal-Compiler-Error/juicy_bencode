@@ -1,65 +1,45 @@
 #![allow(unused)]
+//! A little parser for [bencode](https://www.bittorrent.org/beps/bep_0003.html#bencoding) using the
+//! Nom library. **Nom eats input byte by bytes, and bencode is such juicy input!**
+//!
+//! Bencode allows for 4 kinds of values:
+//! 1. integers
+//! 2. byte strings
+//! 3. lists
+//! 4. dictionaries
+//!
+//! Unlike JSON, bencode doesn't say how to encode stuff in general, but in practice, you should
+//! just//! parse a bencode blob as a dictionary (just like JSON). Although, the individual parsing
+//! functions are provided.
+//!
+//! For more information about bencode, you're encourage to read the specification. It's less than
+//! 200 words long!
 
-use nom::{branch::alt, bytes::complete::{tag, take_while}, character::complete::{char, digit0, i64, u64}, combinator::recognize, sequence::{terminated, tuple}, IResult, Err};
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take, take_while, take_while1},
+    character::complete::{char, digit0, i64, u64},
+    multi::many1,
+    combinator::{recognize, complete, map},
+    sequence::{terminated, tuple, delimited, pair, preceded},
+    Err, IResult, ParseTo,
+};
 use std::collections::BTreeMap;
 
 extern crate derive_more;
-
-use nom::bytes::complete::{take, take_while1};
-use nom::combinator::{complete, map};
-use nom::error::{ErrorKind, ParseError};
-use nom::multi::many1;
-use nom::ParseTo;
-use nom::sequence::{delimited, pair, preceded};
-
-#[derive(Debug)]
-pub enum BencodeSchemaErrorKinds {
-    DictNotInLexicographicalOrder,
-    NomInternal(ErrorKind),
-}
-
-#[derive(Debug)]
-pub struct BencodeSchemaError {
-    message: String,
-    kind: BencodeSchemaErrorKinds,
-}
-
-impl BencodeSchemaError {
-    pub fn new(message: String, kind: BencodeSchemaErrorKinds) -> Self {
-        Self {
-            message,
-            kind,
-        }
-    }
-}
-
-impl ParseError<&[u8]> for BencodeSchemaError {
-    fn from_error_kind(input: &[u8], kind: ErrorKind) -> Self {
-        let message = format!("{:?}:\t{:?}\n", kind, input);
-        let kind = BencodeSchemaErrorKinds::NomInternal(kind);
-        Self {
-            message,
-            kind,
-        }
-    }
-
-    fn append(input: &[u8], kind: ErrorKind, other: Self) -> Self {
-        let message = format!("{}{:?}:\t{:?}\n", other.message, kind, input);
-        let kind = BencodeSchemaErrorKinds::NomInternal(kind);
-        Self {
-            message,
-            kind,
-        }
-    }
-}
 
 fn is_non_zero_num(c: u8) -> bool {
     [b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9'].contains(&c)
 }
 
-
-pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]>
-{
+/// # Note
+/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
+/// it's provided for quick and dirty convenience only.
+///
+/// Parse out a bencode integer, conforming to bencode specification, leading 0s and negative 0 are
+/// rejected. Since the bencode specification places no limit on the range of the integers, the
+/// function will only give out string slices and leave the conversion choice to the user.`
+pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let zero = complete(tag("0"));
     let minus_sign = tag("-");
 
@@ -68,40 +48,45 @@ pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]>
     let positive1 = recognize(pair(take_while1(is_non_zero_num), digit0));
     let positive2 = recognize(pair(take_while1(is_non_zero_num), digit0));
 
-
     // negative case
     let negative = recognize(pair(minus_sign, positive1));
 
-    delimited(tag("i"),
-              alt((positive2, negative, zero)),
-              tag("e"))(input)
+    delimited(tag("i"), alt((positive2, negative, zero)), tag("e"))(input)
 }
 
-
+/// # Note
+/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
+/// it's provided for quick and dirty convenience only.
+///
+/// Parse out a bencode string, note that bencode strings are not equivalent to Rust strings since
+/// bencode places no limit what encoding it uses, hence it's more appreciate to call them byte
+/// strings
 pub fn parse_bencode_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let (str, length) = u64(input)?;
 
     preceded(tag(":"), take(length))(str)
 }
 
+/// # Note
+/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
+/// it's provided for quick and dirty convenience only.
+///
+/// Parse out bencode list, technically, bencode places not restriction on if the list items are
+/// homogeneous, meaning a list could contain both integers and strings.
 pub fn parse_bencode_list(input: &[u8]) -> IResult<&[u8], Vec<BencodeItemView>> {
     let list_elems = many1(bencode_value);
 
-    delimited(
-        tag("l"),
-        list_elems,
-        tag("e"),
-    )(input)
+    delimited(tag("l"), list_elems, tag("e"))(input)
 }
 
 
+/// Main entry for the parser (for all practical purposes, a blob of bencode is key value pairs.
+/// It parses out a bencode dictionary, bencode places no restriction on the homogeneity of
+/// dictionary pairs.
 pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], BencodeItemView>> {
-    let key_value = many1(pair(
-        parse_bencode_string, bencode_value,
-    ));
+    let key_value = many1(pair(parse_bencode_string, bencode_value));
 
     let (remaining, key_value_pairs) = delimited(tag("d"), key_value, tag("e"))(input)?;
-
 
     let dict = key_value_pairs
         .into_iter()
@@ -131,31 +116,47 @@ pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], Bencod
     // }
 }
 
-pub fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView> {
-    let to_int = map(parse_bencode_num, |int_pattern| BencodeItemView::Integer(int_pattern.parse_to().unwrap()));
-    let to_byte_str = map(parse_bencode_string, |byte_slice| BencodeItemView::ByteString(byte_slice));
+/// Top level combinator for choosing an appreciate strategy for parsing out a bencode item
+fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView> {
+    let to_int = map(parse_bencode_num, |int_pattern| {
+        BencodeItemView::Integer(int_pattern.parse_to().unwrap())
+    });
+    let to_byte_str = map(parse_bencode_string, |byte_slice| {
+        BencodeItemView::ByteString(byte_slice)
+    });
     let to_list = map(parse_bencode_list, |items| BencodeItemView::List(items));
     let to_dict = map(parse_bencode_dict, |dict| BencodeItemView::Dictionary(dict));
 
     alt((to_int, to_byte_str, to_list, to_dict))(input)
 }
 
-
+/// Representation of bencode blobs as a tree. The lifetime is tied to the text in memory, achieving
+/// *almost zero copy*. This is perhaps unsuitable for large bencode blobs since the entire blob may
+/// not fit inside the memory.
+///
+/// An owned version is on the agenda but I can't be bothered right now.
 #[derive(Debug, Ord, Clone, PartialOrd, Eq, PartialEq, Hash)]
 pub enum BencodeItemView<'a> {
-    // todo: technically the specification doesn't say any limits on the integer size, need to switch
+    // TODO: technically the specification doesn't say any limits on the integer size, need to switch
     // to an infinite size one
+    /// Bencode integers are represented as i64 for now, technically this is not to specification
+    /// since no range limit is specified in the bencode document.
     Integer(i64),
+
+    /// Bencode strings are not guaranteed to be UTF-8, thus using a byte slice
     ByteString(&'a [u8]),
+
+    /// Bencode lists, not lists may not be homogeneous
     List(Vec<BencodeItemView<'a>>),
+
+    /// Bencode dictionary, not lists may not be homogeneous. Bencode dictionary by specification
+    /// must be lexicographically sorted, BTree preserves ordering
     Dictionary(BTreeMap<&'a [u8], BencodeItemView<'a>>),
 }
 
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use crate::combinator::{BencodeItemView, parse_bencode_dict, parse_bencode_list, parse_bencode_num, parse_bencode_string};
+    use super::*;
 
     #[test]
     fn zero_is_valid_be_num() {
@@ -174,7 +175,6 @@ mod tests {
         let res = parse_bencode_num(b"i0001e");
         assert!(res.is_err());
     }
-
 
     #[test]
     fn negative_number_without_leading_zero_is_valid() {
@@ -240,7 +240,10 @@ mod tests {
     fn bencode_list_eats_all_inputs() {
         let (remaining, parsed) = parse_bencode_list(b"l4:spami42ee").unwrap();
 
-        let expected = vec![BencodeItemView::ByteString(b"spam"), BencodeItemView::Integer(42)];
+        let expected = vec![
+            BencodeItemView::ByteString(b"spam"),
+            BencodeItemView::Integer(42),
+        ];
         assert_eq!(expected, parsed);
         assert_eq!(remaining, b"");
     }

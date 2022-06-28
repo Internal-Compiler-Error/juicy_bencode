@@ -2,6 +2,10 @@
 name = "juicy_bencode"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/Internal-Compiler-Error/juicy_bencode"
+authors = ["Internal Compiler Error"]
+description = "A little parser for bencode using the Nom library"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
