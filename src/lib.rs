@@ -125,8 +125,8 @@ fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView> {
     let to_byte_str = map(parse_bencode_string, |byte_slice| {
         BencodeItemView::ByteString(byte_slice)
     });
-    let to_list = map(parse_bencode_list, |items| BencodeItemView::List(items));
-    let to_dict = map(parse_bencode_dict, |dict| BencodeItemView::Dictionary(dict));
+    let to_list = map(parse_bencode_list, BencodeItemView::List);
+    let to_dict = map(parse_bencode_dict,  BencodeItemView::Dictionary);
 
     alt((to_int, to_byte_str, to_list, to_dict))(input)
 }
