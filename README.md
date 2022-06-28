@@ -1,3 +1,4 @@
+# juicy_bencode
 A little parser for [bencode](https://www.bittorrent.org/beps/bep_0003.html#bencoding) using the Nom library. **Nom eats input 
 byte by bytes, and bencode is such juicy input!**
 

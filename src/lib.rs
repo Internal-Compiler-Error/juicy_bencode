@@ -32,13 +32,14 @@ fn is_non_zero_num(c: u8) -> bool {
     [b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9'].contains(&c)
 }
 
-/// # Note
-/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
-/// it's provided for quick and dirty convenience only.
-///
+
 /// Parse out a bencode integer, conforming to bencode specification, leading 0s and negative 0 are
 /// rejected. Since the bencode specification places no limit on the range of the integers, the
 /// function will only give out string slices and leave the conversion choice to the user.`
+///
+/// # Note
+/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
+/// it's provided for quick and dirty convenience only.
 pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let zero = complete(tag("0"));
     let minus_sign = tag("-");
@@ -54,25 +55,25 @@ pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]> {
     delimited(tag("i"), alt((positive2, negative, zero)), tag("e"))(input)
 }
 
-/// # Note
-/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
-/// it's provided for quick and dirty convenience only.
-///
 /// Parse out a bencode string, note that bencode strings are not equivalent to Rust strings since
 /// bencode places no limit what encoding it uses, hence it's more appreciate to call them byte
 /// strings
+///
+/// # Note
+/// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
+/// it's provided for quick and dirty convenience only.
 pub fn parse_bencode_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let (str, length) = u64(input)?;
 
     preceded(tag(":"), take(length))(str)
 }
 
+/// Parse out bencode list, technically, bencode places not restriction on if the list items are
+/// homogeneous, meaning a list could contain both integers and strings.
+///
 /// # Note
 /// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
 /// it's provided for quick and dirty convenience only.
-///
-/// Parse out bencode list, technically, bencode places not restriction on if the list items are
-/// homogeneous, meaning a list could contain both integers and strings.
 pub fn parse_bencode_list(input: &[u8]) -> IResult<&[u8], Vec<BencodeItemView>> {
     let list_elems = many1(bencode_value);
 
@@ -80,8 +81,8 @@ pub fn parse_bencode_list(input: &[u8]) -> IResult<&[u8], Vec<BencodeItemView>> 
 }
 
 
-/// Main entry for the parser (for all practical purposes, a blob of bencode is key value pairs.
-/// It parses out a bencode dictionary, bencode places no restriction on the homogeneity of
+/// Main entry for the parser (for all practical purposes, a blob of bencode is consist of key value
+/// pairs). It parses out a bencode dictionary, bencode places no restriction on the homogeneity of
 /// dictionary pairs.
 pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], BencodeItemView>> {
     let key_value = many1(pair(parse_bencode_string, bencode_value));
