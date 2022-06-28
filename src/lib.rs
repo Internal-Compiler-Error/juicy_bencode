@@ -1,6 +1,10 @@
 #![allow(unused)]
+//! ![](https://img.shields.io/docsrs/juicy_bencode)
+//! ![](https://img.shields.io/crates/v/juicy_bencode)
+//! ![](https://img.shields.io/crates/l/juicy_bencode)
+//!
 //! A little parser for [bencode](https://www.bittorrent.org/beps/bep_0003.html#bencoding) using the
-//! Nom library. **Nom eats input byte by bytes, and bencode is such juicy input!**
+//! Nom library. **Nom eats input byte by byte, and bencode is such juicy input!**
 //!
 //! Bencode allows for 4 kinds of values:
 //! 1. integers
