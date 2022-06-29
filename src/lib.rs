@@ -151,10 +151,10 @@ pub enum BencodeItemView<'a> {
     /// Bencode strings are not guaranteed to be UTF-8, thus using a byte slice
     ByteString(&'a [u8]),
 
-    /// Bencode lists, not lists may not be homogeneous
+    /// Bencode lists, note lists may not be homogeneous
     List(Vec<BencodeItemView<'a>>),
 
-    /// Bencode dictionary, not lists may not be homogeneous. Bencode dictionary by specification
+    /// Bencode dictionary, note lists may not be homogeneous. Bencode dictionary by specification
     /// must be lexicographically sorted, BTree preserves ordering
     Dictionary(BTreeMap<&'a [u8], BencodeItemView<'a>>),
 }
