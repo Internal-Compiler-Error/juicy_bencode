@@ -16,7 +16,7 @@
 //! just//! parse a bencode blob as a dictionary (just like JSON). Although, the individual parsing
 //! functions are provided.
 //!
-//! For more information about bencode, you're encourage to read the specification. It's less than
+//! For more information about bencode, you're encouraged to read the specification. It's less than
 //! 200 words long!
 
 use nom::{
@@ -25,12 +25,10 @@ use nom::{
     character::complete::{char, digit0, i64, u64},
     multi::many1,
     combinator::{recognize, complete, map},
-    sequence::{terminated, tuple, delimited, pair, preceded},
-    Err, IResult, ParseTo,
+    sequence::{terminated, delimited, pair, preceded},
+    Err, IResult, ParseTo, Parser,
 };
 use std::collections::BTreeMap;
-
-extern crate derive_more;
 
 fn is_non_zero_num(c: u8) -> bool {
     [b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9'].contains(&c)
@@ -56,7 +54,7 @@ pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]> {
     // negative case
     let negative = recognize(pair(minus_sign, positive1));
 
-    delimited(tag("i"), alt((positive2, negative, zero)), tag("e"))(input)
+    delimited(tag("i"), alt((positive2, negative, zero)), tag("e")).parse(input)
 }
 
 /// Parse out a bencode string, note that bencode strings are not equivalent to Rust strings since
@@ -69,7 +67,7 @@ pub fn parse_bencode_num(input: &[u8]) -> IResult<&[u8], &[u8]> {
 pub fn parse_bencode_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let (str, length) = u64(input)?;
 
-    preceded(tag(":"), take(length))(str)
+    preceded(tag(":"), take(length)).parse(str)
 }
 
 /// Parse out bencode list, technically, bencode places not restriction on if the list items are
@@ -78,20 +76,20 @@ pub fn parse_bencode_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 /// # Note
 /// Although the functions are exposed directly, it's unsuitable to be used directly in most cases,
 /// it's provided for quick and dirty convenience only.
-pub fn parse_bencode_list(input: &[u8]) -> IResult<&[u8], Vec<BencodeItemView>> {
+pub fn parse_bencode_list(input: &[u8]) -> IResult<&[u8], Vec<BencodeItemView<'_>>> {
     let list_elems = many1(bencode_value);
 
-    delimited(tag("l"), list_elems, tag("e"))(input)
+    delimited(tag("l"), list_elems, tag("e")).parse(input)
 }
 
 
 /// Main entry for the parser (for all practical purposes, a blob of bencode is consist of key value
 /// pairs). It parses out a bencode dictionary, bencode places no restriction on the homogeneity of
 /// dictionary pairs.
-pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], BencodeItemView>> {
+pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], BencodeItemView<'_>>> {
     let key_value = many1(pair(parse_bencode_string, bencode_value));
 
-    let (remaining, key_value_pairs) = delimited(tag("d"), key_value, tag("e"))(input)?;
+    let (remaining, key_value_pairs) = delimited(tag("d"), key_value, tag("e")).parse(input)?;
 
     let dict = key_value_pairs
         .into_iter()
@@ -122,7 +120,7 @@ pub fn parse_bencode_dict(input: &[u8]) -> IResult<&[u8], BTreeMap<&[u8], Bencod
 }
 
 /// Top level combinator for choosing an appreciate strategy for parsing out a bencode item
-fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView> {
+fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView<'_>> {
     let to_int = map(parse_bencode_num, |int_pattern| {
         BencodeItemView::Integer(int_pattern.parse_to().unwrap())
     });
@@ -132,7 +130,7 @@ fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView> {
     let to_list = map(parse_bencode_list, BencodeItemView::List);
     let to_dict = map(parse_bencode_dict,  BencodeItemView::Dictionary);
 
-    alt((to_int, to_byte_str, to_list, to_dict))(input)
+    alt((to_int, to_byte_str, to_list, to_dict)).parse(input)
 }
 
 /// Representation of bencode blobs as a tree. The lifetime is tied to the text in memory, achieving
