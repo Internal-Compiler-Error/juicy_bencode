@@ -366,4 +366,18 @@ mod tests {
         inner.insert(b"foo".to_vec(), BencodeItem::Integer(42));
         assert_eq!(vec![BencodeItem::Dictionary(inner)], owned);
     }
+
+    #[test]
+    fn owned_item_outlives_input_buffer() {
+        let owned = {
+            let input = b"d3:fooi42ee".to_vec();
+            let (_, dict) = parse_bencode_dict(&input).unwrap();
+            // parse_bencode_dict returns a raw BTreeMap; wrap it in the enum (free move)
+            BencodeItemView::Dictionary(dict).into_owned()
+        }; // input buffer dropped here; owned value must not reference it
+
+        let mut expected = BTreeMap::new();
+        expected.insert(b"foo".to_vec(), BencodeItem::Integer(42));
+        assert_eq!(BencodeItem::Dictionary(expected), owned);
+    }
 }
