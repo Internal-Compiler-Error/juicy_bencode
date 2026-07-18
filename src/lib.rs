@@ -137,7 +137,7 @@ fn bencode_value(input: &[u8]) -> IResult<&[u8], BencodeItemView<'_>> {
 /// *almost zero copy*. This is perhaps unsuitable for large bencode blobs since the entire blob may
 /// not fit inside the memory.
 ///
-/// An owned version is on the agenda but I can't be bothered right now.
+/// See [`BencodeItem`] for an owned version of this tree.
 #[derive(Debug, Ord, Clone, PartialOrd, Eq, PartialEq, Hash)]
 pub enum BencodeItemView<'a> {
     // TODO: technically the specification doesn't say any limits on the integer size, need to switch
@@ -155,6 +155,48 @@ pub enum BencodeItemView<'a> {
     /// Bencode dictionary, note lists may not be homogeneous. Bencode dictionary by specification
     /// must be lexicographically sorted, BTree preserves ordering
     Dictionary(BTreeMap<&'a [u8], BencodeItemView<'a>>),
+}
+
+/// Owned version of [`BencodeItemView`], for when the parsed value must outlive the input
+/// buffer. Obtained via [`BencodeItemView::into_owned`].
+#[derive(Debug, Ord, Clone, PartialOrd, Eq, PartialEq, Hash)]
+pub enum BencodeItem {
+    /// Same as [`BencodeItemView::Integer`]
+    Integer(i64),
+
+    /// Byte string copied out of the input buffer
+    ByteString(Vec<u8>),
+
+    /// List of owned items
+    List(Vec<BencodeItem>),
+
+    /// Dictionary with owned keys and owned values
+    Dictionary(BTreeMap<Vec<u8>, BencodeItem>),
+}
+
+impl<'a> BencodeItemView<'a> {
+    /// Recursively copies all borrowed data, producing an owned [`BencodeItem`] that is
+    /// independent of the input buffer's lifetime.
+    pub fn into_owned(self) -> BencodeItem {
+        match self {
+            BencodeItemView::Integer(int) => BencodeItem::Integer(int),
+            BencodeItemView::ByteString(bytes) => BencodeItem::ByteString(bytes.to_vec()),
+            BencodeItemView::List(items) => {
+                BencodeItem::List(items.into_iter().map(BencodeItemView::into_owned).collect())
+            }
+            BencodeItemView::Dictionary(dict) => BencodeItem::Dictionary(
+                dict.into_iter()
+                    .map(|(key, value)| (key.to_vec(), value.into_owned()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl<'a> From<BencodeItemView<'a>> for BencodeItem {
+    fn from(view: BencodeItemView<'a>) -> Self {
+        view.into_owned()
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +303,81 @@ mod tests {
 
         assert_eq!(expected, parsed);
         assert_eq!(remaining, b"");
+    }
+
+    #[test]
+    fn integer_view_into_owned() {
+        let view = BencodeItemView::Integer(42);
+        assert_eq!(BencodeItem::Integer(42), view.into_owned());
+    }
+
+    #[test]
+    fn byte_string_view_into_owned() {
+        let view = BencodeItemView::ByteString(b"spam");
+        assert_eq!(BencodeItem::ByteString(b"spam".to_vec()), view.into_owned());
+    }
+
+    #[test]
+    fn parsed_list_views_into_owned() {
+        // the list entry point yields Vec<BencodeItemView>, convert each element
+        let (_, views) = parse_bencode_list(b"l4:spami42ee").unwrap();
+        let owned: Vec<BencodeItem> = views.into_iter().map(BencodeItemView::into_owned).collect();
+
+        let expected = vec![
+            BencodeItem::ByteString(b"spam".to_vec()),
+            BencodeItem::Integer(42),
+        ];
+        assert_eq!(expected, owned);
+    }
+
+    #[test]
+    fn parsed_dict_into_owned_via_from() {
+        let (_, view) = parse_bencode_dict(b"d3:bar4:spam3:fooi42ee").unwrap();
+        // the dict entry point yields the raw BTreeMap, wrap it in the Dictionary view variant
+        let owned: BencodeItem = BencodeItemView::Dictionary(view).into(); // exercises the From impl
+
+        let mut expected = BTreeMap::new();
+        expected.insert(b"bar".to_vec(), BencodeItem::ByteString(b"spam".to_vec()));
+        expected.insert(b"foo".to_vec(), BencodeItem::Integer(42));
+        assert_eq!(BencodeItem::Dictionary(expected), owned);
+    }
+
+    #[test]
+    fn nested_structures_convert_recursively() {
+        // list inside dict
+        let (_, view) = parse_bencode_dict(b"d4:listl4:spam4:eggsee").unwrap();
+        let owned = BencodeItemView::Dictionary(view).into_owned();
+
+        let mut expected = BTreeMap::new();
+        expected.insert(
+            b"list".to_vec(),
+            BencodeItem::List(vec![
+                BencodeItem::ByteString(b"spam".to_vec()),
+                BencodeItem::ByteString(b"eggs".to_vec()),
+            ]),
+        );
+        assert_eq!(BencodeItem::Dictionary(expected), owned);
+
+        // dict inside list
+        let (_, views) = parse_bencode_list(b"ld3:fooi42eee").unwrap();
+        let owned: Vec<BencodeItem> = views.into_iter().map(BencodeItemView::into_owned).collect();
+
+        let mut inner = BTreeMap::new();
+        inner.insert(b"foo".to_vec(), BencodeItem::Integer(42));
+        assert_eq!(vec![BencodeItem::Dictionary(inner)], owned);
+    }
+
+    #[test]
+    fn owned_item_outlives_input_buffer() {
+        let owned = {
+            let input = b"d3:fooi42ee".to_vec();
+            let (_, dict) = parse_bencode_dict(&input).unwrap();
+            // parse_bencode_dict returns a raw BTreeMap; wrap it in the enum (free move)
+            BencodeItemView::Dictionary(dict).into_owned()
+        }; // input buffer dropped here; owned value must not reference it
+
+        let mut expected = BTreeMap::new();
+        expected.insert(b"foo".to_vec(), BencodeItem::Integer(42));
+        assert_eq!(BencodeItem::Dictionary(expected), owned);
     }
 }
